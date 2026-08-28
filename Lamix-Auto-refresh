@@ -1,0 +1,214 @@
+// ==UserScript==
+// @name         Auto Show Report Clicker (Enhanced UI)
+// @namespace    lamix-auto
+// @version      2.0
+// @description  Auto click Show Report + Sound + Custom UI & Reset Buttons
+// @match        https://panel.lamix.org/cdrs
+// @match        https://panel.lamix.org/cdrs?*
+// @grant        none
+// @run-at       document-idle
+// ==UserScript==
+
+(function () {
+  'use strict';
+
+  // ---- Total SMS পড়া ----
+  function getTotalSms() {
+    var t = document.body ? (document.body.innerText || '') : '';
+    var m = t.replace(/,/g, '').match(/Total\s*SMS\s*([\d]+)/i);
+    return m ? parseInt(m[1], 10) : null;
+  }
+
+  // ---- শব্দ (WebAudio) ----
+  var actx = null;
+  function initAudio() {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === 'suspended') actx.resume();
+  }
+  function beep(freq, startAt, dur) {
+    var o = actx.createOscillator(), g = actx.createGain();
+    o.type = 'sine'; o.frequency.value = freq;
+    o.connect(g); g.connect(actx.destination);
+    var now = actx.currentTime + startAt;
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(0.35, now + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    o.start(now); o.stop(now + dur + 0.03);
+  }
+  function playDing() {
+    try { initAudio(); beep(880, 0, 0.15); beep(1175, 0.18, 0.28); } catch (e) {}
+  }
+
+  function build() {
+    if (document.getElementById('autoRefBox')) return;
+    if (!document.body) { setTimeout(build, 500); return; }
+
+    var timer = null;
+    var lastTotal = null;
+
+    // --- নতুন কালার ও ডিজাইন ---
+    var box = document.createElement('div');
+    box.id = 'autoRefBox';
+    box.style.cssText =
+      'position:fixed;bottom:15px;right:15px;z-index:2147483647;background:#18181b;color:#f4f4f5;' +
+      'padding:8px 12px;border-radius:10px;font:12px Arial, sans-serif;box-shadow:0 10px 25px rgba(0,0,0,0.6);' +
+      'display:flex;align-items:center;gap:6px;border:1px solid #27272a;';
+
+    // Drag handle
+    var handle = document.createElement('span');
+    handle.textContent = '⋮⋮';
+    handle.title = 'Drag to move';
+    handle.style.cssText = 'cursor:move;font-size:16px;line-height:1;padding:0 4px;user-select:none;color:#a1a1aa;touch-action:none;';
+
+    // Auto Start/Stop Button
+    var btn = document.createElement('button');
+    btn.textContent = 'Auto: OFF';
+    btn.style.cssText =
+      'background:#ef4444;color:#fff;border:none;padding:6px 10px;border-radius:6px;cursor:pointer;font-weight:bold;font-size:11px;';
+
+    // Time Dropdown
+    var sel = document.createElement('select');
+    sel.style.cssText = 'padding:5px;border-radius:6px;background:#27272a;color:#fff;border:1px solid #3f3f46;font-size:11px;outline:none;';
+    [3, 5, 10, 15, 30].forEach(function (s) {
+      var o = document.createElement('option');
+      o.value = s; o.textContent = s + 's';
+      if (s === 10) o.selected = true;
+      sel.appendChild(o);
+    });
+
+    // Test Sound Button
+    var testBtn = document.createElement('button');
+    testBtn.textContent = '🔔';
+    testBtn.title = 'Test Sound';
+    testBtn.style.cssText = 'background:#0284c7;color:#fff;border:none;padding:5px 8px;border-radius:6px;cursor:pointer;';
+    testBtn.onclick = function () { playDing(); };
+
+    // Reset Position Button (নতুন এড করা হয়েছে)
+    var resetBtn = document.createElement('button');
+    resetBtn.textContent = '↺';
+    resetBtn.title = 'Reset UI Position';
+    resetBtn.style.cssText = 'background:#3f3f46;color:#fff;border:none;padding:5px 8px;border-radius:6px;cursor:pointer;font-weight:bold;';
+    resetBtn.onclick = function() {
+      box.style.left = 'auto'; box.style.top = 'auto';
+      box.style.right = '15px'; box.style.bottom = '15px';
+      try { localStorage.removeItem('autoRefBoxPos'); } catch(e){}
+    };
+
+    // Reload Page Button (নতুন এড করা হয়েছে)
+    var reloadBtn = document.createElement('button');
+    reloadBtn.textContent = '↻';
+    reloadBtn.title = 'Reload Page';
+    reloadBtn.style.cssText = 'background:#3f3f46;color:#fff;border:none;padding:5px 8px;border-radius:6px;cursor:pointer;font-weight:bold;';
+    reloadBtn.onclick = function() { location.reload(); };
+
+    var status = document.createElement('span');
+    status.style.cssText = 'font-size:11px;color:#22c55e;font-weight:bold;margin-left:4px;';
+
+    function findBtn() {
+      var els = document.querySelectorAll('button, input[type=button], input[type=submit], a, .btn');
+      for (var i = 0; i < els.length; i++) {
+        var t = (els[i].innerText || els[i].textContent || els[i].value || '').trim().toLowerCase();
+        if (t.indexOf('show report') !== -1) return els[i];
+      }
+      return null;
+    }
+
+    function checkTotal() {
+      var cur = getTotalSms();
+      if (cur !== null) {
+        if (lastTotal !== null && cur > lastTotal) {
+          playDing();
+          status.textContent = '🔔 New! Total: ' + cur;
+        } else {
+          status.textContent = 'Total: ' + cur + ' (' + new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) + ')';
+        }
+        lastTotal = cur;
+      }
+    }
+
+    function tick() {
+      var b = findBtn();
+      if (b) b.click();
+      setTimeout(checkTotal, 1800);
+    }
+
+    function stop() {
+      if (timer) { clearInterval(timer); timer = null; }
+      btn.textContent = 'Auto: OFF'; btn.style.background = '#ef4444';
+    }
+
+    function start() {
+      var secs = parseInt(sel.value, 10);
+      var b = findBtn();
+      if (!b) { alert('Show Report button not found.'); return; }
+      initAudio();
+      lastTotal = getTotalSms();
+      status.textContent = 'Total: ' + (lastTotal === null ? '?' : lastTotal);
+      tick();
+      timer = setInterval(tick, secs * 1000);
+      btn.textContent = 'Auto: ON'; btn.style.background = '#22c55e';
+    }
+
+    btn.onclick = function () { timer ? stop() : start(); };
+
+    box.appendChild(handle);
+    box.appendChild(btn);
+    box.appendChild(sel);
+    box.appendChild(testBtn);
+    box.appendChild(resetBtn);
+    box.appendChild(reloadBtn);
+    box.appendChild(status);
+    document.body.appendChild(box);
+
+    // Position Load
+    try {
+      var p = JSON.parse(localStorage.getItem('autoRefBoxPos'));
+      if (p && p.left) {
+        box.style.right = 'auto'; box.style.bottom = 'auto';
+        box.style.left = p.left; box.style.top = p.top;
+      }
+    } catch (e) {}
+
+    // Drag Logic (Mouse + Touch)
+    var dragging = false, offX = 0, offY = 0;
+    function getPoint(e) {
+      if (e.touches && e.touches.length) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      return { x: e.clientX, y: e.clientY };
+    }
+    function dragStart(e) {
+      dragging = true;
+      var r = box.getBoundingClientRect();
+      var pnt = getPoint(e);
+      offX = pnt.x - r.left; offY = pnt.y - r.top;
+      box.style.right = 'auto'; box.style.bottom = 'auto';
+      box.style.left = r.left + 'px'; box.style.top = r.top + 'px';
+      e.preventDefault();
+    }
+    function dragMove(e) {
+      if (!dragging) return;
+      var pnt = getPoint(e);
+      var x = pnt.x - offX, y = pnt.y - offY;
+      x = Math.max(0, Math.min(x, window.innerWidth - box.offsetWidth));
+      y = Math.max(0, Math.min(y, window.innerHeight - box.offsetHeight));
+      box.style.left = x + 'px'; box.style.top = y + 'px';
+      e.preventDefault();
+    }
+    function dragEnd() {
+      if (dragging) {
+        dragging = false;
+        try { localStorage.setItem('autoRefBoxPos', JSON.stringify({ left: box.style.left, top: box.style.top })); } catch (e) {}
+      }
+    }
+
+    handle.addEventListener('mousedown', dragStart);
+    document.addEventListener('mousemove', dragMove);
+    document.addEventListener('mouseup', dragEnd);
+
+    handle.addEventListener('touchstart', dragStart, { passive: false });
+    document.addEventListener('touchmove', dragMove, { passive: false });
+    document.addEventListener('touchend', dragEnd);
+    document.addEventListener('touchcancel', dragEnd);
+  }
+
+  build();
+})();
